@@ -10985,10 +10985,29 @@
     };
     window.onlineTurnTimerState = onlineTurnTimerState;
 
+    function onlineRoomHasBothPlayers(room) {
+      if (!room || typeof room !== 'object') return false;
+      const p1 = room.player1Uid || room.hostUid;
+      const p2 = room.player2Uid || room.guestUid;
+      const status = String(room.status || '').toLowerCase();
+      return Boolean(p1 && p2 && (status === 'active' || status === 'matched' || status === 'playing'));
+    }
+
+    function isOnlineTurnTimerReady() {
+      if (uiFlowState?.battleMode === 'private') {
+        return onlineRoomHasBothPlayers(privateBattleState?.roomData);
+      }
+      if (uiFlowState?.battleMode === 'network') {
+        return onlineRoomHasBothPlayers(onlineState?.currentMatchData);
+      }
+      return false;
+    }
+
     function isOnlineTurnTimerEnabled() {
       return Boolean(
         uiFlowState?.battleSessionActive &&
         (uiFlowState.battleMode === 'network' || uiFlowState.battleMode === 'private') &&
+        isOnlineTurnTimerReady() &&
         !gameState.gameOver
       );
     }
@@ -11023,13 +11042,13 @@
       dom.turnTimerFill.style.height = `${percent}%`;
       dom.turnTimerValue.textContent = `${remainingSeconds}s`;
 
-      if (remainingMs <= 0 && isLiveOnlineBattle()) {
+      if (remainingMs <= 0 && isLiveOnlineBattle() && isOnlineTurnTimerReady()) {
         handleOnlineTurnTimerExpired();
       }
     }
 
     function handleOnlineTurnTimerExpired() {
-      if (!isLiveOnlineBattle() || gameState.gameOver || onlineTurnSyncState.applyingRemote) return;
+      if (!isLiveOnlineBattle() || !isOnlineTurnTimerReady() || gameState.gameOver || onlineTurnSyncState.applyingRemote) return;
       const key = getTurnTimerKey();
       if (onlineTurnTimerState.lastTimeoutKey === key) return;
       onlineTurnTimerState.lastTimeoutKey = key;
