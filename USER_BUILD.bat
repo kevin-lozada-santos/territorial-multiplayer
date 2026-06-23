@@ -2,34 +2,26 @@
 setlocal
 title Territorial USER BUILD
 cd /d "%~dp0"
+set "GAME_URL=https://kevin-lozada-santos.github.io/territorial-multiplayer/index.html?build=user"
 
 echo ============================================================
 echo Territorial - USER BUILD
 echo Build: STABLE-LOCALHOST-8000-USER-TEXT-CLEANUP
 echo ============================================================
 echo.
-echo This version uses localhost:8000 and does NOT require Python.
-echo Keep this black window open while playing.
+echo Opening the public HTTPS build.
+echo No local server, Python, or install step is required.
 echo.
 
 if not exist "index.html" (
-  echo ERROR: index.html is missing.
-  echo Extract the ZIP first, then run this BAT from the extracted folder.
+  echo NOTE: index.html is not next to this launcher.
+  echo The hosted build will still open in your browser.
   echo.
-  pause
-  exit /b 1
 )
 
-if not exist "serve_localhost_8000.ps1" (
-  echo ERROR: serve_localhost_8000.ps1 is missing.
-  echo Re-extract the ZIP so all files are together.
-  echo.
-  pause
-  exit /b 1
-)
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0serve_localhost_8000.ps1" -Mode user
+start "" "%GAME_URL%"
 
 echo.
-echo Launcher stopped or failed.
+echo If the browser did not open, paste this URL:
+echo %GAME_URL%
 pause
