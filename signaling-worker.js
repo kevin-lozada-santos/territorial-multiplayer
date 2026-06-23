@@ -50,6 +50,11 @@ export class Matchmaker {
       return;
     }
 
+    if (message.type === 'complete') {
+      this.completeRoom(record, message);
+      return;
+    }
+
     if (message.type === 'leave') {
       this.closeClient(record);
     }
@@ -106,6 +111,20 @@ export class Matchmaker {
       fromRole: record.role,
       payload: message.payload || null
     });
+  }
+
+  completeRoom(record, message) {
+    const roomId = String(message.roomId || record.roomId || '');
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const host = this.clients.get(room.hostId);
+    const guest = this.clients.get(room.guestId);
+    this.send(host, { type: 'complete', roomId });
+    this.send(guest, { type: 'complete', roomId });
+    this.rooms.delete(roomId);
+    if (host) host.roomId = '';
+    if (guest) guest.roomId = '';
   }
 
   closeClient(record) {

@@ -11323,6 +11323,14 @@
         onlineState.p2pStatus = 'connected';
         trafficTrackerState.activeRoomId = roomId || quickMatchP2PState.roomId || '';
         recordTrafficMetric('p2pConnected', 1, `${quickMatchP2PState.role || 'peer'} connected`);
+        if (onlineState.currentMatchCollection === 'websocket' && scalableSearchState.socket?.readyState === WebSocket.OPEN) {
+          try {
+            scalableSearchState.socket.send(JSON.stringify({
+              type: 'complete',
+              roomId: scalableSearchState.roomId || quickMatchP2PState.roomId
+            }));
+          } catch (_) {}
+        }
         setToast('P2P CONNECTED: Gameplay sync is peer-to-peer.', 'success');
         if (getLocalOnlinePlayerId() === 1) {
           sendQuickMatchP2PState('initial-p2p-state');
@@ -11829,6 +11837,8 @@
               await enterScalableOnlineMatch(message);
             } else if (message.type === 'signal') {
               await handleScalableSignal(message.payload);
+            } else if (message.type === 'complete') {
+              closeScalableSearchSocket('p2p-connected');
             } else if (message.type === 'waiting') {
               setOnlineStatus('Searching for player...', 'Waiting for another player to join...', false);
             } else if (message.type === 'error') {
