@@ -10101,8 +10101,11 @@
       uid: null,
       queueUnsubscribe: null,
       matchUnsubscribe: null,
+      activePresenceTimer: null,
+      activeInstanceId: `client_${Date.now()}_${Math.random().toString(36).slice(2)}`,
       currentMatchId: null,
       currentMatchData: null,
+      currentMatchCollection: null,
       mode: 'local'
     };
 
@@ -10200,6 +10203,7 @@
       const player2Uid = user.uid;
 
       resetMatch();
+      const activeAtClient = new Date().toISOString();
 
       await m.setDoc(matchRef, {
         schemaVersion: 1,
@@ -10207,8 +10211,14 @@
         matchId,
         player1Uid,
         player2Uid,
+        activePlayers: {
+          [player1Uid]: { uid: player1Uid, playerId: 1, lastSeenAtClient: activeAtClient },
+          [player2Uid]: { uid: player2Uid, playerId: 2, lastSeenAtClient: activeAtClient }
+        },
+        activePlayerCount: 2,
+        activeHeartbeatAtClient: activeAtClient,
         activePlayerUid: player1Uid,
-        createdAtClient: new Date().toISOString(),
+        createdAtClient: activeAtClient,
         createdAtServer: m.serverTimestamp(),
         lastEvent: 'match-found',
         state: getSerializableBattleState()
@@ -10238,6 +10248,7 @@
       document.body.classList.add('battle-active');
       onlineState.currentMatchId = matchId;
       onlineState.currentMatchData = matchData;
+      onlineState.currentMatchCollection = 'matches';
 
       if (onlineState.queueUnsubscribe) {
         onlineState.queueUnsubscribe();
@@ -10263,10 +10274,15 @@
         onlineState.matchUnsubscribe = cloudState.modules.onSnapshot(ref, snap => {
           if (!snap.exists()) return;
           onlineState.currentMatchData = snap.data();
+          if (onlineState.currentMatchData?.status === 'closed') {
+            closeInactiveLocalOnlineInstance('legacy-match-closed');
+            return;
+          }
           const status = onlineState.currentMatchData?.status || 'active';
           if (dom.onlineFindMatchBtn) dom.onlineFindMatchBtn.textContent = status === 'active' ? 'Network Active' : 'Network Match';
         });
       }
+      startActivePlayerHeartbeat('match-entry');
     }
 
     async function startFindOnlineMatch() {
@@ -10390,6 +10406,7 @@
     }
 
     async function switchToLocalMultiplayer() {
+      stopActivePlayerHeartbeat();
       closeScalableSearchSocket('switch-local');
       resetQuickMatchP2P('switch-local');
       if (onlineState.queueUnsubscribe) {
@@ -10534,6 +10551,7 @@
     }
 
     function enterVaultScreen() {
+      stopActivePlayerHeartbeat();
       stopMainMenuShapeCycle();
       uiFlowState.mainMenuOpen = false;
       uiFlowState.battleSessionActive = false;
@@ -10551,6 +10569,7 @@
     }
 
     function openBattleModeMenu() {
+      stopActivePlayerHeartbeat();
       uiFlowState.battleSessionActive = false;
       uiFlowState.battleSearching = false;
       uiFlowState.battleMode = null;
@@ -10561,6 +10580,7 @@
     }
 
     function startLocalBattleFromMenu() {
+      stopActivePlayerHeartbeat();
       stopMenuMusic('local');
       uiFlowState.mainMenuOpen = false;
       uiFlowState.battleSessionActive = true;
@@ -10658,6 +10678,7 @@
     }
 
     function backToVaultAfterMatch() {
+      stopActivePlayerHeartbeat();
       dom.victoryOverlay.classList.add('hidden');
       dom.victoryOverlay.classList.remove('flex');
       uiFlowState.battleSessionActive = false;
@@ -10797,6 +10818,11 @@
           const data = snap.data() || {};
           privateBattleState.roomData = data;
 
+          if (data.status === 'closed') {
+            closeInactiveLocalOnlineInstance('private-room-closed');
+            return;
+          }
+
           if (data.status === 'joined' && data.guestUid) {
             if (dom.battleIdPlayerStatus) dom.battleIdPlayerStatus.textContent = `Player joined: ${data.guestName || 'Guest'}`;
             if (dom.startHostedBattleBtn) dom.startHostedBattleBtn.classList.remove('hidden');
@@ -10872,6 +10898,11 @@
           if (!liveSnap.exists()) return;
           const data = liveSnap.data() || {};
           privateBattleState.roomData = data;
+
+          if (data.status === 'closed') {
+            closeInactiveLocalOnlineInstance('private-room-closed');
+            return;
+          }
 
           if (data.status === 'active') {
             startPrivateBattleFromRoom(data);
@@ -11240,6 +11271,170 @@
       return null;
     }
 
+    const ACTIVE_PLAYER_HEARTBEAT_MS = 3000;
+    const ACTIVE_PLAYER_STALE_MS = 12000;
+
+    function getCurrentPresenceDocRef() {
+      if (!cloudState.modules || !cloudState.db) return null;
+      if (uiFlowState?.battleMode === 'private' && privateBattleState.battleId) return getBattleRoomDocRef(privateBattleState.battleId);
+      if (uiFlowState?.battleMode === 'network' && onlineState.currentMatchId) {
+        if (onlineState.currentMatchCollection === 'battleRooms') return getBattleRoomDocRef(onlineState.currentMatchId);
+        return getMatchDocRef(onlineState.currentMatchId);
+      }
+      return null;
+    }
+
+    function getFreshActivePlayers(roomData = {}) {
+      const now = Date.now();
+      const source = roomData.activePlayers && typeof roomData.activePlayers === 'object' ? roomData.activePlayers : {};
+      const fresh = {};
+
+      for (const [presenceKey, entry] of Object.entries(source)) {
+        const seenAt = Date.parse(entry?.lastSeenAtClient || '');
+        const uid = String(entry?.uid || presenceKey || '');
+        if (!uid || !Number.isFinite(seenAt) || now - seenAt > ACTIVE_PLAYER_STALE_MS) continue;
+        fresh[presenceKey] = {
+          uid,
+          instanceId: String(entry?.instanceId || ''),
+          playerId: Number(entry?.playerId) === 2 ? 2 : 1,
+          lastSeenAtClient: entry.lastSeenAtClient
+        };
+      }
+
+      return fresh;
+    }
+
+    function getActivePlayerCount(activePlayers = {}) {
+      const playerIds = new Set();
+      for (const entry of Object.values(activePlayers)) {
+        const playerId = Number(entry?.playerId);
+        if (playerId === 1 || playerId === 2) playerIds.add(playerId);
+      }
+      return playerIds.size;
+    }
+
+    function getLocalPresenceKey(uid = getLocalOnlineUid()) {
+      if (!uid) return '';
+      return `${uid}:${onlineState.activeInstanceId}`;
+    }
+
+    async function writeActivePlayerHeartbeat(reason = 'heartbeat') {
+      if (!isLiveOnlineBattle() || !cloudState.modules || !cloudState.db) return false;
+      const ref = getCurrentPresenceDocRef();
+      const uid = getLocalOnlineUid();
+      const localPlayerId = getLocalOnlinePlayerId();
+      if (!ref || !uid || !localPlayerId) return false;
+
+      try {
+        const snap = await cloudState.modules.getDoc(ref);
+        const roomData = snap.exists() ? (snap.data() || {}) : {};
+        if (roomData.status === 'closed') return false;
+        const activePlayers = getFreshActivePlayers(roomData);
+        const nowIso = new Date().toISOString();
+        const presenceKey = getLocalPresenceKey(uid);
+        activePlayers[presenceKey] = {
+          uid,
+          instanceId: onlineState.activeInstanceId,
+          playerId: localPlayerId,
+          lastSeenAtClient: nowIso
+        };
+
+        const count = getActivePlayerCount(activePlayers);
+        const patch = {
+          activePlayers,
+          activePlayerCount: count,
+          activeHeartbeatAtClient: nowIso,
+          activeHeartbeatReason: reason,
+          updatedAtClient: nowIso,
+          updatedAtServer: cloudState.modules.serverTimestamp()
+        };
+
+        await cloudState.modules.setDoc(ref, patch, { merge: true });
+        if (uiFlowState?.battleMode === 'private') {
+          privateBattleState.roomData = { ...(privateBattleState.roomData || {}), ...patch };
+        } else if (uiFlowState?.battleMode === 'network') {
+          onlineState.currentMatchData = { ...(onlineState.currentMatchData || {}), ...patch };
+        }
+        return true;
+      } catch (error) {
+        console.warn('Active player heartbeat failed.', error);
+        return false;
+      }
+    }
+
+    async function releaseActivePlayerPresence(reason = 'leave') {
+      const ref = getCurrentPresenceDocRef();
+      const uid = getLocalOnlineUid();
+      const presenceKey = getLocalPresenceKey(uid);
+      if (!ref || !uid || !presenceKey || !cloudState.modules || !cloudState.db) return false;
+
+      try {
+        const snap = await cloudState.modules.getDoc(ref);
+        if (!snap.exists()) return false;
+
+        const roomData = snap.data() || {};
+        const activePlayers = getFreshActivePlayers(roomData);
+        delete activePlayers[presenceKey];
+
+        const nowIso = new Date().toISOString();
+        const count = getActivePlayerCount(activePlayers);
+        const patch = {
+          activePlayers,
+          activePlayerCount: count,
+          activeHeartbeatAtClient: nowIso,
+          activeHeartbeatReason: reason,
+          updatedAtClient: nowIso,
+          updatedAtServer: cloudState.modules.serverTimestamp()
+        };
+
+        if (count === 0) {
+          patch.status = 'closed';
+          patch.quickQueue = false;
+          patch.closedAtClient = nowIso;
+          patch.lastEvent = 'no-active-local-instances';
+        }
+
+        await cloudState.modules.setDoc(ref, patch, { merge: true });
+        return true;
+      } catch (error) {
+        console.warn('Active player presence release failed.', error);
+        return false;
+      }
+    }
+
+    function stopActivePlayerHeartbeat(reason = 'leave') {
+      if (onlineState.activePresenceTimer) {
+        window.clearInterval(onlineState.activePresenceTimer);
+        onlineState.activePresenceTimer = null;
+      }
+      releaseActivePlayerPresence(reason);
+    }
+
+    function startActivePlayerHeartbeat(reason = 'match-active') {
+      if (onlineState.activePresenceTimer) {
+        window.clearInterval(onlineState.activePresenceTimer);
+        onlineState.activePresenceTimer = null;
+      }
+      writeActivePlayerHeartbeat(reason);
+      onlineState.activePresenceTimer = window.setInterval(() => {
+        writeActivePlayerHeartbeat('tick');
+      }, ACTIVE_PLAYER_HEARTBEAT_MS);
+    }
+
+    function closeInactiveLocalOnlineInstance(reason = 'room-closed') {
+      stopActivePlayerHeartbeat(reason);
+      onlineState.searching = false;
+      onlineState.currentMatchId = null;
+      onlineState.currentMatchData = null;
+      uiFlowState.battleSessionActive = false;
+      uiFlowState.battleSearching = false;
+      document.body.classList.remove('battle-active', 'battle-searching-mode');
+      document.body.classList.add('battle-menu-mode');
+      setOnlineOverlayVisible(false);
+      updateBattleFlowClasses();
+      setToast('ONLINE ROOM CLOSED: No active players remain in that match.', 'info');
+    }
+
     function getCurrentOnlineRoomData() {
       if (uiFlowState?.battleMode === 'private') return privateBattleState.roomData || {};
       if (uiFlowState?.battleMode === 'network') return onlineState.currentMatchData || {};
@@ -11531,6 +11726,7 @@
         const roleLabel = localPlayerId ? `PLAYER ${localPlayerId}` : (privateBattleState.role === 'host' ? 'HOST' : 'JOINED PLAYER');
         setToast(`PRIVATE BATTLE STARTED: You are ${roleLabel} // ${privateBattleState.battleId}`, 'success');
       }
+      startActivePlayerHeartbeat('private-match-entry');
     };
 
     const originalHostStartPrivateBattleForRealtimeSync = hostStartPrivateBattle;
@@ -11551,16 +11747,23 @@
         const ref = getBattleRoomDocRef(battleId);
         originalResetMatchForRealtimeSync();
         const initialState = getSerializableBattleState();
+        const activeAtClient = new Date().toISOString();
         const nextRoom = {
           ...room,
           status: 'active',
           player1Uid: room.hostUid,
           player2Uid: room.guestUid,
+          activePlayers: {
+            [room.hostUid]: { uid: room.hostUid, playerId: 1, lastSeenAtClient: activeAtClient },
+            [room.guestUid]: { uid: room.guestUid, playerId: 2, lastSeenAtClient: activeAtClient }
+          },
+          activePlayerCount: 2,
+          activeHeartbeatAtClient: activeAtClient,
           activePlayerUid: room.hostUid,
           activePlayer: 1,
           currentTurn: 1,
           state: initialState,
-          startedAtClient: new Date().toISOString(),
+          startedAtClient: activeAtClient,
           lastEvent: 'private-start',
           actionSeq: Date.now(),
           updatedAtServer: cloudState.modules.serverTimestamp()
@@ -12326,6 +12529,7 @@
           const player1Uid = live.player1Uid || live.hostUid;
           if (live.status !== 'waiting' || !player1Uid || player1Uid === user.uid || live.player2Uid || live.guestUid) return null;
 
+          const activeAtClient = new Date().toISOString();
           const activeState = live.state || resetQuickMatchLocalStateForInitialHost();
           activeState.activePlayer = 1;
           activeState.currentTurn = Number(live.currentTurn) || 1;
@@ -12341,16 +12545,22 @@
             guestUid: user.uid,
             player1Uid,
             player2Uid: user.uid,
+            activePlayers: {
+              [player1Uid]: { uid: player1Uid, playerId: 1, lastSeenAtClient: activeAtClient },
+              [user.uid]: { uid: user.uid, playerId: 2, lastSeenAtClient: activeAtClient }
+            },
+            activePlayerCount: 2,
+            activeHeartbeatAtClient: activeAtClient,
             activePlayerUid: player1Uid,
             activePlayer: 1,
             currentTurn: Number(live.currentTurn) || 1,
             guestName: user.displayName || user.email || 'Player 2',
-            joinedAtClient: new Date().toISOString(),
-            startedAtClient: new Date().toISOString(),
+            joinedAtClient: activeAtClient,
+            startedAtClient: activeAtClient,
             lastEvent: 'quick-match-found',
             actionSeq: Date.now(),
             state: activeState,
-            updatedAtClient: new Date().toISOString(),
+            updatedAtClient: activeAtClient,
             updatedAtServer: m.serverTimestamp()
           };
           transaction.set(ref, patch, { merge: true });
@@ -12362,6 +12572,7 @@
         const live = liveSnap.data() || {};
         const player1Uid = live.player1Uid || live.hostUid;
         if (live.status !== 'waiting' || !player1Uid || player1Uid === user.uid || live.player2Uid || live.guestUid) return null;
+        const activeAtClient = new Date().toISOString();
         const activeState = live.state || resetQuickMatchLocalStateForInitialHost();
         activeState.activePlayer = 1;
         activeState.currentTurn = Number(live.currentTurn) || 1;
@@ -12378,16 +12589,22 @@
           guestUid: user.uid,
           player1Uid,
           player2Uid: user.uid,
+          activePlayers: {
+            [player1Uid]: { uid: player1Uid, playerId: 1, lastSeenAtClient: activeAtClient },
+            [user.uid]: { uid: user.uid, playerId: 2, lastSeenAtClient: activeAtClient }
+          },
+          activePlayerCount: 2,
+          activeHeartbeatAtClient: activeAtClient,
           activePlayerUid: player1Uid,
           activePlayer: 1,
           currentTurn: Number(live.currentTurn) || 1,
           guestName: user.displayName || user.email || 'Player 2',
-          joinedAtClient: new Date().toISOString(),
-          startedAtClient: new Date().toISOString(),
+          joinedAtClient: activeAtClient,
+          startedAtClient: activeAtClient,
           lastEvent: 'quick-match-found',
           actionSeq: Date.now(),
           state: activeState,
-          updatedAtClient: new Date().toISOString(),
+          updatedAtClient: activeAtClient,
           updatedAtServer: m.serverTimestamp()
         };
         await m.setDoc(ref, claimedRoom, { merge: true });
@@ -12495,6 +12712,7 @@
         renderAll();
         updateOnlineTurnLockUI();
       }
+      startActivePlayerHeartbeat('quick-match-entry');
       try {
         await ensureQuickMatchP2P(roomId, onlineState.currentMatchData);
       } catch (error) {
@@ -12508,6 +12726,10 @@
         if (!snap.exists()) return;
         const data = snap.data() || {};
         onlineState.currentMatchData = data;
+        if (data.status === 'closed') {
+          closeInactiveLocalOnlineInstance('quick-room-closed');
+          return;
+        }
         ensureQuickMatchP2P(roomId, data).catch(error => {
           console.warn('Quick match P2P signaling update failed.', error);
         });
@@ -12668,6 +12890,7 @@
 
     const originalCancelOnlineSearchForFindMatchHook = cancelOnlineSearch;
     cancelOnlineSearch = async function () {
+      stopActivePlayerHeartbeat();
       quickMatchSearchRunId += 1;
       clearQuickMatchPollTimer();
       recordTrafficMetric('searchCancelled', 1, 'cancel search');
@@ -12804,6 +13027,9 @@
       if (dom.handCollapseBtn) dom.handCollapseBtn.addEventListener('click', toggleHandCollapsed);
       dom.victoryResetBtn.addEventListener('click', resetMatch);
       window.addEventListener('resize', drawArena);
+      window.addEventListener('pagehide', () => {
+        stopActivePlayerHeartbeat('pagehide');
+      });
       startOnlineTurnTimerLoop();
     }
 
