@@ -12326,6 +12326,12 @@
           const player1Uid = live.player1Uid || live.hostUid;
           if (live.status !== 'waiting' || !player1Uid || player1Uid === user.uid || live.player2Uid || live.guestUid) return null;
 
+          const activeState = live.state || resetQuickMatchLocalStateForInitialHost();
+          activeState.activePlayer = 1;
+          activeState.currentTurn = Number(live.currentTurn) || 1;
+          activeState.turnStartedAtClient = Date.now();
+          activeState.turnDurationSeconds = 90;
+
           const patch = {
             battleId: room.id,
             mode: 'quick',
@@ -12340,10 +12346,10 @@
             currentTurn: Number(live.currentTurn) || 1,
             guestName: user.displayName || user.email || 'Player 2',
             joinedAtClient: new Date().toISOString(),
-            startedAtClient: live.startedAtClient || new Date().toISOString(),
+            startedAtClient: new Date().toISOString(),
             lastEvent: 'quick-match-found',
             actionSeq: Date.now(),
-            state: live.state || resetQuickMatchLocalStateForInitialHost(),
+            state: activeState,
             updatedAtClient: new Date().toISOString(),
             updatedAtServer: m.serverTimestamp()
           };
@@ -12356,6 +12362,12 @@
         const live = liveSnap.data() || {};
         const player1Uid = live.player1Uid || live.hostUid;
         if (live.status !== 'waiting' || !player1Uid || player1Uid === user.uid || live.player2Uid || live.guestUid) return null;
+        const activeState = live.state || resetQuickMatchLocalStateForInitialHost();
+        activeState.activePlayer = 1;
+        activeState.currentTurn = Number(live.currentTurn) || 1;
+        activeState.turnStartedAtClient = Date.now();
+        activeState.turnDurationSeconds = 90;
+
         claimedRoom = {
           ...live,
           battleId: room.id,
@@ -12371,10 +12383,10 @@
           currentTurn: Number(live.currentTurn) || 1,
           guestName: user.displayName || user.email || 'Player 2',
           joinedAtClient: new Date().toISOString(),
-          startedAtClient: live.startedAtClient || new Date().toISOString(),
+          startedAtClient: new Date().toISOString(),
           lastEvent: 'quick-match-found',
           actionSeq: Date.now(),
-          state: live.state || resetQuickMatchLocalStateForInitialHost(),
+          state: activeState,
           updatedAtClient: new Date().toISOString(),
           updatedAtServer: m.serverTimestamp()
         };
