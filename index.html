@@ -11005,7 +11005,9 @@
       publishTimer: null,
       publishBusy: false,
       lastSerializedState: '',
-      lastPublishedAt: 0
+      lastPublishedAt: 0,
+      lastFirestoreFallbackAt: 0,
+      lastAppliedActionSeq: 0
     };
     window.onlineTurnSyncState = onlineTurnSyncState;
 
@@ -11594,9 +11596,22 @@
       updateTurnTimerUI();
     };
 
-    async function publishOnlineBattleState(reason = 'state-update') {
+    function shouldMirrorQuickMatchStateToFirestore(reason = 'state-update', options = {}) {
+      if (uiFlowState?.battleMode !== 'network' || onlineState.currentMatchCollection !== 'battleRooms') return false;
+      if (options.forceFirestore) return true;
+      const liveActionReasons = new Set(['place', 'draw', 'rotate', 'recycle', 'end-turn', 'turn-timeout', 'resign']);
+      if (!liveActionReasons.has(String(reason || '').toLowerCase())) return false;
+      onlineTurnSyncState.lastFirestoreFallbackAt = Date.now();
+      return true;
+    }
+
+    async function publishOnlineBattleState(reason = 'state-update', options = {}) {
       if (!canPublishOnlineBattleState()) return false;
-      if (uiFlowState?.battleMode === 'network' && onlineState.currentMatchCollection === 'battleRooms' && sendQuickMatchP2PState(reason)) {
+      const quickMatchP2PSent = uiFlowState?.battleMode === 'network' &&
+        onlineState.currentMatchCollection === 'battleRooms' &&
+        sendQuickMatchP2PState(reason, options);
+
+      if (quickMatchP2PSent && !shouldMirrorQuickMatchStateToFirestore(reason, options)) {
         return true;
       }
       const ref = getCurrentOnlineDocRef();
@@ -11604,7 +11619,7 @@
 
       const payload = getSerializableBattleState();
       const serialized = JSON.stringify(payload);
-      if (serialized === onlineTurnSyncState.lastSerializedState && Date.now() - onlineTurnSyncState.lastPublishedAt < 500) return true;
+      if (!options.force && serialized === onlineTurnSyncState.lastSerializedState && Date.now() - onlineTurnSyncState.lastPublishedAt < 500) return true;
       onlineTurnSyncState.lastSerializedState = serialized;
       onlineTurnSyncState.lastPublishedAt = Date.now();
 
@@ -11632,13 +11647,13 @@
       }
     }
 
-    function schedulePublishOnlineBattleState(reason = 'state-update') {
+    function schedulePublishOnlineBattleState(reason = 'state-update', options = {}) {
       if (!canPublishOnlineBattleState()) return;
       if (onlineTurnSyncState.publishTimer) window.clearTimeout(onlineTurnSyncState.publishTimer);
       onlineTurnSyncState.publishTimer = window.setTimeout(() => {
         onlineTurnSyncState.publishTimer = null;
-        publishOnlineBattleState(reason);
-      }, 80);
+        publishOnlineBattleState(reason, options);
+      }, options.immediate ? 0 : 80);
     }
 
     function runSyncedLocalAction(actionLabel, callback, options = {}) {
@@ -11649,7 +11664,12 @@
       const before = wasLiveOnlineBattle ? JSON.stringify(getSerializableBattleState()) : '';
       const result = callback();
       const after = wasLiveOnlineBattle ? JSON.stringify(getSerializableBattleState()) : '';
-      if (wasLiveOnlineBattle && before !== after) schedulePublishOnlineBattleState(actionLabel.toLowerCase().replace(/\s+/g, '-'));
+      if (wasLiveOnlineBattle && before !== after) {
+        schedulePublishOnlineBattleState(actionLabel.toLowerCase().replace(/\s+/g, '-'), {
+          force: true,
+          immediate: true
+        });
+      }
       updateOnlineTurnLockUI();
       return result;
     }
@@ -11960,11 +11980,11 @@
       };
     }
 
-    function sendQuickMatchP2PState(reason = 'state-update') {
+    function sendQuickMatchP2PState(reason = 'state-update', options = {}) {
       if (!isQuickMatchP2PReady()) return false;
       const payload = getSerializableBattleState();
       const serialized = JSON.stringify(payload);
-      if (serialized === onlineTurnSyncState.lastSerializedState && Date.now() - onlineTurnSyncState.lastPublishedAt < 500) return true;
+      if (!options.force && serialized === onlineTurnSyncState.lastSerializedState && Date.now() - onlineTurnSyncState.lastPublishedAt < 500) return true;
       onlineTurnSyncState.lastSerializedState = serialized;
       onlineTurnSyncState.lastPublishedAt = Date.now();
       quickMatchP2PState.lastSentSeq += 1;
@@ -12712,6 +12732,7 @@
         renderAll();
         updateOnlineTurnLockUI();
       }
+      onlineTurnSyncState.lastAppliedActionSeq = Number(onlineState.currentMatchData?.actionSeq) || onlineTurnSyncState.lastAppliedActionSeq || 0;
       startActivePlayerHeartbeat('quick-match-entry');
       try {
         await ensureQuickMatchP2P(roomId, onlineState.currentMatchData);
@@ -12744,8 +12765,14 @@
           setOnlineOverlayVisible(false);
           setActiveTab('arenaView', true);
           updateBattleFlowClasses();
-          if (data.state && !isQuickMatchP2PReady()) applySerializableBattleState(data.state, 'quick-battle-room');
-          else updateOnlineTurnLockUI();
+          const actionSeq = Number(data.actionSeq) || 0;
+          const hasNewFallbackState = Boolean(data.state && actionSeq && actionSeq > onlineTurnSyncState.lastAppliedActionSeq);
+          if (data.state && (!isQuickMatchP2PReady() || hasNewFallbackState)) {
+            if (actionSeq) onlineTurnSyncState.lastAppliedActionSeq = actionSeq;
+            applySerializableBattleState(data.state, isQuickMatchP2PReady() ? 'quick-battle-room-fallback' : 'quick-battle-room');
+          } else {
+            updateOnlineTurnLockUI();
+          }
         }
 
         if (dom.onlineFindMatchBtn) dom.onlineFindMatchBtn.textContent = data.status === 'active' ? 'Network Active' : 'Find Match';
