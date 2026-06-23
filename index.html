@@ -6485,7 +6485,6 @@
         <div id="arenaActionBar" class="mb-4 grid gap-3 border-b-2 border-stone-700/20 pb-4 lg:grid-cols-[1fr_auto] lg:items-center">
 <div class="battle-arena-title-spacer" aria-hidden="true"></div>
           <div class="flex flex-wrap gap-2 lg:justify-end">
-            <button id="resetMatchBtn" type="button" class="action-button rounded-2xl bg-white/70 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-stone-700">Reset Match</button>
             <button id="drawCardBtn" type="button" class="action-button rounded-2xl bg-blue-300 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-stone-950">Draw Card</button>
             <button id="rotateCcwBtn" type="button" class="action-button rounded-2xl bg-white/70 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-stone-700" title="Rotate selected shape counterclockwise for 3 mana">↺ -3 Mana</button>
             <button id="rotateCwBtn" type="button" class="action-button rounded-2xl bg-white/70 px-4 py-2 text-xs font-black uppercase tracking-[0.14em] text-stone-700" title="Rotate selected shape clockwise for 3 mana">↻ -3 Mana</button>
@@ -12569,7 +12568,7 @@
       if (dom.rotateCcwBtn) dom.rotateCcwBtn.addEventListener('click', () => rotateSelectedHandCard('ccw'));
       if (dom.rotateCwBtn) dom.rotateCwBtn.addEventListener('click', () => rotateSelectedHandCard('cw'));
       dom.endTurnBtn.addEventListener('click', endTurn);
-      dom.resetMatchBtn.addEventListener('click', resetMatch);
+      if (dom.resetMatchBtn) dom.resetMatchBtn.addEventListener('click', resetMatch);
       if (dom.handCollapseBtn) dom.handCollapseBtn.addEventListener('click', toggleHandCollapsed);
       dom.victoryResetBtn.addEventListener('click', resetMatch);
       window.addEventListener('resize', drawArena);
