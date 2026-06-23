@@ -4520,6 +4520,79 @@
       pointer-events: auto;
     }
 
+    .turn-timer-panel {
+      display: none;
+      position: relative;
+      grid-template-rows: auto 1fr auto;
+      gap: 6px;
+      min-width: 0;
+      padding: 8px 7px;
+      border: 4px solid var(--ui-outline, #15110d);
+      background-color: #f3d48e;
+      background-image:
+        linear-gradient(90deg, var(--ui-gold, #f3c649) 0 5px, transparent 5px calc(100% - 5px), var(--ui-blue, #2f68c9) calc(100% - 5px)),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.18) 0 2px, transparent 2px 14px),
+        linear-gradient(180deg, #ffe2a1 0%, #d9a458 100%);
+      box-shadow: 6px 6px 0 var(--ui-outline, #15110d), inset 0 0 0 3px rgba(255,255,255,0.28);
+      color: var(--ui-outline, #15110d);
+      image-rendering: pixelated;
+      pointer-events: auto;
+    }
+
+    body.battle-active.online-turn-timer-active .turn-timer-panel {
+      display: grid;
+    }
+
+    .turn-timer-title,
+    .turn-timer-value {
+      border: 3px solid var(--ui-outline, #15110d);
+      background: var(--ui-gold, #f3c649);
+      box-shadow: 3px 3px 0 var(--ui-outline, #15110d);
+      padding: 3px 4px;
+      font-size: 8px;
+      font-weight: 1000;
+      letter-spacing: 0.08em;
+      line-height: 1;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .turn-timer-gauge {
+      position: relative;
+      min-height: 0;
+      border: 4px solid var(--ui-outline, #15110d);
+      background:
+        repeating-linear-gradient(0deg, rgba(27,20,16,0.16) 0 2px, transparent 2px 12px),
+        linear-gradient(180deg, #fff4c7 0%, #d7b765 100%);
+      box-shadow: inset 3px 3px 0 rgba(255,255,255,0.42), inset -3px -3px 0 rgba(45,26,12,0.22);
+      overflow: hidden;
+    }
+
+    .turn-timer-fill {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 100%;
+      background:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.28) 0 4px, transparent 4px 10px),
+        linear-gradient(180deg, #8cc5ff 0%, #2f68c9 100%);
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25);
+      transition: height 0.2s linear;
+    }
+
+    .turn-timer-panel[data-player="2"] .turn-timer-fill {
+      background:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.24) 0 4px, transparent 4px 10px),
+        linear-gradient(180deg, #ff9b8d 0%, #c94942 100%);
+    }
+
+    .turn-timer-panel[data-low="true"] .turn-timer-fill {
+      background:
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.30) 0 4px, transparent 4px 10px),
+        linear-gradient(180deg, #ffd64d 0%, #e0483e 100%);
+    }
+
     .territory-title,
     .territory-win-label {
       border: 3px solid var(--ui-outline, #15110d);
@@ -6228,6 +6301,45 @@
         min-height: 56px !important;
       }
     }
+
+    body.arena-mode {
+      --turn-timer-panel-w: 0px !important;
+      --turn-timer-panel-gap: 0px !important;
+    }
+
+    body.arena-mode.online-turn-timer-active {
+      --turn-timer-panel-w: clamp(58px, 4.5vw, 74px) !important;
+      --turn-timer-panel-gap: 12px !important;
+    }
+
+    body.arena-mode .arena-play-zone {
+      width: calc(
+        var(--arena-board-w)
+        + var(--recycle-panel-gap)
+        + var(--recycle-panel-w)
+        + var(--turn-timer-panel-gap)
+        + var(--turn-timer-panel-w)
+        + var(--territory-panel-gap)
+        + var(--territory-panel-w)
+      ) !important;
+      grid-template-columns: var(--arena-board-w) var(--recycle-panel-w) var(--turn-timer-panel-w) var(--territory-panel-w) !important;
+      gap: var(--recycle-panel-gap) !important;
+    }
+
+    body.arena-mode.online-turn-timer-active .arena-play-zone {
+      column-gap: var(--recycle-panel-gap) !important;
+    }
+
+    body.arena-mode.online-turn-timer-active #turnTimerPanel {
+      display: grid !important;
+      height: 100% !important;
+      min-height: 160px !important;
+      z-index: 96 !important;
+    }
+
+    body.arena-mode:not(.online-turn-timer-active) #turnTimerPanel {
+      display: none !important;
+    }
   </style>
 
 </head>
@@ -6522,6 +6634,14 @@
             <div class="recycle-text">Drop card<br>+1 Mana</div>
           </aside>
 
+          <aside id="turnTimerPanel" class="turn-timer-panel" data-player="1" data-low="false" aria-label="Turn timer">
+            <div class="turn-timer-title">Turn</div>
+            <div class="turn-timer-gauge" aria-hidden="true">
+              <div id="turnTimerFill" class="turn-timer-fill"></div>
+            </div>
+            <div id="turnTimerValue" class="turn-timer-value">90s</div>
+          </aside>
+
           <aside id="territoryPanel" class="territory-panel" aria-label="Territory progress toward victory">
             <div class="territory-title">Territory</div>
             <div class="territory-gauges" aria-hidden="true">
@@ -6760,6 +6880,8 @@
       winner: null,
       victoryReason: '',
       resignedPlayer: null,
+      turnStartedAtClient: Date.now(),
+      turnDurationSeconds: 90,
       handCollapsed: false,
       canvasCssWidth: 0,
       canvasCssHeight: 0,
@@ -6948,6 +7070,9 @@
       arenaPlayZone: document.getElementById('arenaPlayZone'),
       territoryPanel: document.getElementById('territoryPanel'),
       cardRecycleZone: document.getElementById('cardRecycleZone'),
+      turnTimerPanel: document.getElementById('turnTimerPanel'),
+      turnTimerFill: document.getElementById('turnTimerFill'),
+      turnTimerValue: document.getElementById('turnTimerValue'),
       p1TerritoryFill: document.getElementById('p1TerritoryFill'),
       p2TerritoryFill: document.getElementById('p2TerritoryFill'),
       p1TerritoryPct: document.getElementById('p1TerritoryPct'),
@@ -8360,6 +8485,8 @@
       gameState.winner = null;
       gameState.victoryReason = '';
       gameState.resignedPlayer = null;
+      gameState.turnStartedAtClient = Date.now();
+      gameState.turnDurationSeconds = 90;
       setHandCollapsed(false);
       dom.victoryOverlay.classList.add('hidden');
       dom.victoryOverlay.classList.remove('flex');
@@ -8386,6 +8513,8 @@
       gameState.removeMode = false;
       updateRemoveModeButton();
       gameState.lastRays = [];
+      gameState.turnStartedAtClient = Date.now();
+      gameState.turnDurationSeconds = 90;
 
       const mana = gameState.mana[gameState.activePlayer];
       mana.max = Math.min(MAX_MANA, mana.max + MANA_STEP);
@@ -10849,6 +10978,73 @@
     };
     window.onlineTurnSyncState = onlineTurnSyncState;
 
+    const ONLINE_TURN_TIMER_SECONDS = 90;
+    const onlineTurnTimerState = {
+      intervalId: null,
+      lastTimeoutKey: ''
+    };
+    window.onlineTurnTimerState = onlineTurnTimerState;
+
+    function isOnlineTurnTimerEnabled() {
+      return Boolean(
+        uiFlowState?.battleSessionActive &&
+        (uiFlowState.battleMode === 'network' || uiFlowState.battleMode === 'private') &&
+        !gameState.gameOver
+      );
+    }
+
+    function getTurnTimerKey() {
+      return `${gameState.currentTurn}:${gameState.activePlayer}:${gameState.turnStartedAtClient || 0}`;
+    }
+
+    function getTurnTimerRemainingMs(now = Date.now()) {
+      const startedAt = Math.max(0, Number(gameState.turnStartedAtClient) || now);
+      const durationMs = ONLINE_TURN_TIMER_SECONDS * 1000;
+      return clamp(durationMs - Math.max(0, now - startedAt), 0, durationMs);
+    }
+
+    function updateTurnTimerUI() {
+      const enabled = isOnlineTurnTimerEnabled();
+      document.body.classList.toggle('online-turn-timer-active', enabled);
+
+      if (!dom.turnTimerPanel || !dom.turnTimerFill || !dom.turnTimerValue) return;
+      if (!enabled) {
+        dom.turnTimerPanel.dataset.low = 'false';
+        dom.turnTimerFill.style.height = '100%';
+        dom.turnTimerValue.textContent = `${ONLINE_TURN_TIMER_SECONDS}s`;
+        return;
+      }
+
+      const remainingMs = getTurnTimerRemainingMs();
+      const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+      const percent = clamp((remainingMs / (ONLINE_TURN_TIMER_SECONDS * 1000)) * 100, 0, 100);
+      dom.turnTimerPanel.dataset.player = String(gameState.activePlayer);
+      dom.turnTimerPanel.dataset.low = String(remainingSeconds <= 15);
+      dom.turnTimerFill.style.height = `${percent}%`;
+      dom.turnTimerValue.textContent = `${remainingSeconds}s`;
+
+      if (remainingMs <= 0 && isLiveOnlineBattle()) {
+        handleOnlineTurnTimerExpired();
+      }
+    }
+
+    function handleOnlineTurnTimerExpired() {
+      if (!isLiveOnlineBattle() || gameState.gameOver || onlineTurnSyncState.applyingRemote) return;
+      const key = getTurnTimerKey();
+      if (onlineTurnTimerState.lastTimeoutKey === key) return;
+      onlineTurnTimerState.lastTimeoutKey = key;
+      runSyncedLocalAction('TURN TIMEOUT', () => {
+        originalEndTurnForRealtimeSync();
+        setToast(`TIMEOUT: ${PLAYERS[gameState.activePlayer].name}'s turn began.`, 'info');
+      }, { skipTurnGate: true });
+    }
+
+    function startOnlineTurnTimerLoop() {
+      if (onlineTurnTimerState.intervalId) return;
+      onlineTurnTimerState.intervalId = window.setInterval(updateTurnTimerUI, 250);
+      updateTurnTimerUI();
+    }
+
     function cloneManaState(rawMana) {
       const source = rawMana || gameState.mana || {};
       return {
@@ -10969,6 +11165,8 @@
         winner: gameState.winner === 1 || gameState.winner === 2 ? gameState.winner : null,
         victoryReason: gameState.victoryReason ? String(gameState.victoryReason).slice(0, 180) : '',
         resignedPlayer: gameState.resignedPlayer === 1 || gameState.resignedPlayer === 2 ? gameState.resignedPlayer : null,
+        turnStartedAtClient: Math.max(0, Number(gameState.turnStartedAtClient) || Date.now()),
+        turnDurationSeconds: 90,
         updatedAtClient: new Date().toISOString()
       };
     };
@@ -10996,6 +11194,8 @@
         gameState.winner = Number(state.winner) === 1 || Number(state.winner) === 2 ? Number(state.winner) : null;
         gameState.victoryReason = state.victoryReason ? String(state.victoryReason).slice(0, 180) : '';
         gameState.resignedPlayer = Number(state.resignedPlayer) === 1 || Number(state.resignedPlayer) === 2 ? Number(state.resignedPlayer) : null;
+        gameState.turnStartedAtClient = Math.max(0, Number(state.turnStartedAtClient) || Date.now());
+        gameState.turnDurationSeconds = 90;
         gameState.hoverCell = null;
         gameState.removeMode = false;
         updateRemoveModeButton();
@@ -11177,6 +11377,7 @@
     renderTurnHud = function () {
       originalRenderTurnHudForRealtimeSync();
       updateOnlineTurnLockUI();
+      updateTurnTimerUI();
     };
 
     async function publishOnlineBattleState(reason = 'state-update') {
@@ -12572,6 +12773,7 @@
       if (dom.handCollapseBtn) dom.handCollapseBtn.addEventListener('click', toggleHandCollapsed);
       dom.victoryResetBtn.addEventListener('click', resetMatch);
       window.addEventListener('resize', drawArena);
+      startOnlineTurnTimerLoop();
     }
 
     boot();
